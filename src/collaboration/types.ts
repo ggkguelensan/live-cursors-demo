@@ -29,7 +29,12 @@ export const profiles: Profile[] = [
 ];
 export type Anchor = RelativePosition;
 export type Selection = { from: number; to: number };
-export type Comment = { text: string; editing: boolean; expiresAt: number | null };
+export type Comment = {
+  text: string;
+  editing: boolean;
+  expiresAt: number | null;
+  simulated?: boolean;
+};
 export type Presence = {
   userId: UserId;
   session: string;

@@ -172,7 +172,7 @@ test('cursor comments never edit text and remain for precisely 30 seconds after 
 test('collaborators react to delivered edits and converge after the whole scenario', () => {
   const demo = new DemoRoom(() => {});
   try {
-    for (let index = 0; index < 100; index++) demo.advance(250);
+    for (let index = 0; index < 1200 && demo.playing; index++) demo.advance(50);
     demo.drain('reverse');
     expect(demo.playing).toBe(false);
     expect(new Set(texts(demo)).size).toBe(1);
@@ -283,6 +283,63 @@ test('a reset rejects stale input and even retained old packet callbacks', () =>
     demo.drain('reverse');
     expect(demo.session).not.toBe(oldSession);
     expect(texts(demo)).toEqual([initialText, initialText, initialText]);
+  } finally {
+    demo.destroy();
+  }
+});
+
+test('simulated edits and comments arrive one character at a time at a human pace', () => {
+  const demo = new DemoRoom(() => {});
+  try {
+    demo.advance(1500);
+    expect(demo.replicas.maya.text.toString()).toBe(initialText);
+    demo.advance(200);
+    expect(demo.replicas.maya.text.toString()).toBe(initialText.replace('shared', 'lshared'));
+    demo.advance(50);
+    expect(demo.replicas.maya.text.toString()).toBe(initialText.replace('shared', 'lshared'));
+    let previous = '';
+    for (let index = 0; index < 300; index++) {
+      demo.advance(50);
+      const comment = demo.replicas.leo.own.comment;
+      if (!comment) continue;
+      expect(comment.text.length - previous.length).toBeLessThanOrEqual(1);
+      previous = comment.text;
+      if (!comment.editing) break;
+    }
+    expect(previous).toBe('Love this direction. Let’s keep it simple.');
+    expect(demo.replicas.leo.own.comment?.simulated).toBe(true);
+  } finally {
+    demo.destroy();
+  }
+});
+
+test('pause freezes a partial phrase; manual input cancels that actor’s scheduled typing', () => {
+  const demo = new DemoRoom(() => {});
+  try {
+    demo.advance(1500);
+    demo.advance(200);
+    demo.command({ type: 'play' });
+    const partial = demo.replicas.maya.text.toString();
+    demo.advance(5000);
+    expect(demo.replicas.maya.text.toString()).toBe(partial);
+    demo.command({ type: 'play' });
+    demo.advance(200);
+    expect(demo.replicas.maya.text.toString()).not.toBe(partial);
+    const maya = demo.replicas.maya;
+    demo.command({
+      type: 'edit',
+      userId: 'maya',
+      session: demo.session,
+      baseVersion: maya.revision,
+      text: 'My document.',
+      selection: { from: 12, to: 12 },
+    });
+    for (let index = 0; index < 30; index++) demo.advance(50);
+    expect(maya.text.toString()).toBe('My document.');
+    demo.command({ type: 'reset' });
+    demo.command({ type: 'play' });
+    demo.advance(5000);
+    expect(demo.replicas.maya.text.toString()).toBe(initialText);
   } finally {
     demo.destroy();
   }
