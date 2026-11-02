@@ -14,6 +14,7 @@ import {
 type Message =
   | { type: 'update'; session: string; from: UserId; update: Uint8Array }
   | { type: 'presence'; session: string; from: UserId; presence: Presence };
+type Typing = { due: number; index: number; text: string; comment: boolean; deleting: boolean };
 type Packet = { id: number; due: number; key?: string; run(): void };
 let roomNumber = 0;
 export class DemoRoom {
@@ -35,6 +36,7 @@ export class DemoRoom {
   private frameId = 0;
   private logId = 0;
   private storyStep = 0;
+  private typing = new Map<UserId, Typing>();
   private nextStory = 1500;
   private lastSecond = 0;
   private lastHeartbeat = 0;
@@ -142,7 +144,8 @@ export class DemoRoom {
       this.drain('reverse');
       this.note('network', 'Replay complete. Both edits survive, including duplicate packets.');
     }
-    if (this.playing && this.now >= this.nextStory) {
+    if (this.playing || this.releaseRace !== null) this.typeNextCharacter();
+    if (this.playing && !this.typing.size && this.now >= this.nextStory) {
       this.nextStory = this.now + 1800;
       this.story();
     }
@@ -175,6 +178,42 @@ export class DemoRoom {
     const next = old.slice(0, from) + insert + old.slice(from + remove);
     replica.edit(replica.revision, next, { from: from + insert.length, to: from + insert.length });
   }
+  // 60 WPM uses five characters per word: about one keystroke every 200ms.
+  // Deterministic variation keeps replay/test behavior stable, with word/thought pauses.
+  private typeNextCharacter() {
+    for (const [userId, task] of this.typing) {
+      if (this.now < task.due) continue;
+      const replica = this.replicas[userId];
+      const character = Array.from(task.text)[task.index];
+      if (character === undefined) {
+        if (task.comment) replica.comment(task.text, false, this.now, true);
+        this.typing.delete(userId);
+        this.nextStory = this.now + 1000;
+        continue;
+      }
+      task.index++;
+      if (task.comment) {
+        replica.comment(Array.from(task.text).slice(0, task.index).join(''), true, this.now, true);
+      } else {
+        const range = replica.selection();
+        if (!range) {
+          this.typing.delete(userId);
+          continue;
+        }
+        if (task.deleting) {
+          const from = Math.max(0, range.from - character.length);
+          this.rewrite(userId, from, range.to - from, '');
+        } else this.rewrite(userId, range.from, range.to - range.from, character);
+      }
+      const interval = [150, 180, 210, 170, 190][task.index % 5];
+      task.due =
+        this.now + interval + (/\s/.test(character) ? 100 : /[.!?]/.test(character) ? 400 : 0);
+    }
+  }
+  private typeText(userId: UserId, text: string, comment = false, deleting = false) {
+    if (comment) this.replicas[userId].comment('', true, this.now, true);
+    this.typing.set(userId, { text, comment, deleting, index: 0, due: this.now + 200 });
+  }
   private story() {
     const maya = this.replicas.maya;
     const leo = this.replicas.leo;
@@ -183,21 +222,21 @@ export class DemoRoom {
     switch (this.storyStep) {
       case 0: {
         this.narrative = 'Maya adds “live”. The other clients have not received it yet.';
-        this.rewrite('maya', word(maya, 'shared'), 0, 'live ');
+        maya.move(word(maya, 'shared'));
+        this.typeText('maya', 'live ');
         this.note('edit', 'Maya added “live” to the opening line.');
         break;
       }
       case 1: {
         const at = word(leo, 'live');
-        if (at < 0) return;
+        if (at < 0 || !leo.text.toString().includes('live shared')) return;
         leo.move(at, at + 11);
-        leo.comment('Love this direction. Let’s keep it simple.', true, this.now);
+        this.typeText('leo', 'Love this direction. Let’s keep it simple.', true);
         this.narrative = 'Leo receives Maya’s edit, selects it and replies in his cursor bubble.';
         this.note('comment', 'Leo reacts to Maya’s new phrase with a cursor comment.');
         break;
       }
       case 2: {
-        leo.comment(leo.own.comment?.text ?? '', false, this.now);
         const at = word(nora, 'live');
         if (at < 0) return;
         nora.move(at, at + 11);
@@ -211,16 +250,18 @@ export class DemoRoom {
         const draft = word(maya, 'the draft');
         if (draft < 0) return;
         maya.move(draft + 4, draft + 9);
-        maya.comment('Leo, could you tighten this sentence?', false, this.now);
+        this.typeText('maya', 'Leo, could you tighten this sentence?', true);
         this.narrative = 'Maya sees Nora’s tag and asks Leo to refine the draft.';
         this.note('comment', 'Maya asks Leo to tighten the sentence.');
         break;
       }
       case 4: {
-        if (!leo.presence.get('maya')?.comment) return;
+        const request = leo.presence.get('maya')?.comment;
+        if (!request || request.editing || !request.text.endsWith('sentence?')) return;
         const at = word(leo, 'the draft');
         if (at < 0) return;
-        this.rewrite('leo', at + 4, 5, 'note');
+        leo.move(at + 4, at + 9);
+        this.typeText('leo', 'note');
         this.narrative =
           'Leo responds with an edit. Every cursor and tag is rebased against the merged text.';
         this.note('edit', 'Leo replaces “draft” with “note” after reading Maya’s comment.');
@@ -229,13 +270,18 @@ export class DemoRoom {
       case 5: {
         if (word(nora, 'Keep the note') < 0) return;
         const at = word(nora, ' and kind');
-        if (at >= 0) this.rewrite('nora', at, 9, '');
-        nora.comment('A little shorter. Ready to share?', false, this.now);
+        if (at >= 0) {
+          nora.move(at + 9);
+          this.typeText('nora', ' and kind', false, true);
+        }
         this.narrative =
           'Nora receives the revision, removes a few words and leaves a final thought.';
         this.note('edit', 'Nora shortens the sentence and leaves a 30-second comment.');
         break;
       }
+      case 6:
+        this.typeText('nora', 'A little shorter. Ready to share?', true);
+        break;
       default:
         this.playing = false;
         this.narrative =
@@ -253,6 +299,7 @@ export class DemoRoom {
       return;
     }
     if ('userId' in command) {
+      this.typing.delete(command.userId);
       const replica = this.replicas[command.userId];
       switch (command.type) {
         case 'edit':
@@ -284,6 +331,7 @@ export class DemoRoom {
       switch (command.type) {
         case 'play':
           this.playing = !this.playing;
+          for (const task of this.typing.values()) task.due = this.now + 200;
           this.nextStory = this.now + 500;
           break;
         case 'hold':
@@ -296,12 +344,15 @@ export class DemoRoom {
           break;
         case 'race': {
           this.playing = false;
+          this.typing.clear();
           this.drain();
           this.held = true;
           const at = this.replicas.maya.text.toString().indexOf('ideas') + 5;
-          this.rewrite('maya', Math.max(0, at), 0, ' + Maya');
-          this.rewrite('leo', Math.max(0, at), 0, ' + Leo');
-          this.releaseRace = this.now + 1000;
+          this.replicas.maya.move(Math.max(0, at));
+          this.replicas.leo.move(Math.max(0, at));
+          this.typeText('maya', ' + Maya');
+          this.typeText('leo', ' + Leo');
+          this.releaseRace = this.now + 2500;
           this.narrative =
             'Two clients insert at the same position before either sees the other edit. Replay arrives out of order.';
           this.note('network', 'Race started: independent edits at the same anchor.');
@@ -323,6 +374,7 @@ export class DemoRoom {
     this.knownUsers.clear();
     this.log = [];
     this.storyStep = 0;
+    this.typing.clear();
     this.nextStory = this.now + 1500;
     this.held = false;
     this.playing = true;
@@ -380,7 +432,7 @@ export class DemoRoom {
       pending: this.queue.length,
       held: this.held,
       playing: this.playing,
-      finished: !this.playing && this.storyStep >= 6,
+      finished: !this.playing && this.storyStep >= 7,
       converged:
         states.every((state) => state === states[0]) &&
         this.server.getText('document').toString() === this.replicas.maya.text.toString(),

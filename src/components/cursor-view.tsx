@@ -62,7 +62,7 @@ export function CursorView({
     paint(latest.current);
   }, [placement, layout]);
   const comment = placement?.comment;
-  const editing = own && Boolean(comment?.editing);
+  const editing = own && Boolean(comment?.editing) && !comment?.simulated;
   const visibleComment = Boolean(
     comment && (comment.expiresAt === null || comment.expiresAt > now),
   );
@@ -107,22 +107,11 @@ export function CursorView({
   const bubble = allocated ?? retained.current;
   const avatarX = expanded ? bubble.x + bubble.width - 14 - geometry.caret.x : -1;
   const avatarY = expanded ? bubble.y - 14 - geometry.caret.y : -30;
-  const nearX = Math.max(bubble.x + 10, Math.min(geometry.caret.x, bubble.x + bubble.width - 10));
-  const nearY = Math.max(bubble.y + 10, Math.min(geometry.caret.y, bubble.y + bubble.height - 10));
-  const horizontal = geometry.caret.y >= bubble.y + bubble.height || geometry.caret.y <= bubble.y;
-  const edgeX = horizontal
-    ? nearX
-    : geometry.caret.x < bubble.x
-      ? bubble.x
-      : bubble.x + bubble.width;
-  const edgeY = horizontal
-    ? geometry.caret.y < bubble.y
-      ? bubble.y
-      : bubble.y + bubble.height
-    : nearY;
-  const tether = horizontal
-    ? `M ${geometry.caret.x} ${geometry.caret.y} L ${edgeX - 12} ${edgeY} L ${edgeX + 12} ${edgeY} Z`
-    : `M ${geometry.caret.x} ${geometry.caret.y} L ${edgeX} ${edgeY - 12} L ${edgeX} ${edgeY + 12} Z`;
+  const connectionX = Math.max(
+    bubble.x + 8,
+    Math.min(geometry.caret.x + 1, bubble.x + bubble.width - 8),
+  );
+  const tether = `M ${geometry.caret.x + 1} ${geometry.caret.y - 2} L ${connectionX} ${bubble.y + bubble.height}`;
   return (
     <div
       className={`cursor-layer ${own ? 'is-own' : ''}`}
@@ -174,7 +163,7 @@ export function CursorView({
                     placeholder="A thought, not a document edit…"
                     maxLength={180}
                     rows={2}
-                    style={{ height: bubble.height - 44 }}
+                    style={{ height: bubble.height - 40 }}
                     onChange={(event) => onCommentChange(event.currentTarget.value)}
                     onKeyDown={(event) => {
                       if (event.key === 'Escape' && !event.nativeEvent.isComposing) {
@@ -185,14 +174,16 @@ export function CursorView({
                     }}
                   />
                   <div className="comment-hint">
-                    <kbd>esc</kbd> to return · stays for 30s
+                    <kbd>esc</kbd> back to document
                   </div>
                 </>
               ) : (
                 <>
                   <p>{comment.text || '…'}</p>
                   <div className="comment-hint comment-lifetime">
-                    {Math.max(1, Math.ceil(((comment.expiresAt ?? now) - now) / 1000))}s
+                    {comment.editing
+                      ? 'typing…'
+                      : `${Math.max(1, Math.ceil(((comment.expiresAt ?? now) - now) / 1000))}s`}
                   </div>
                 </>
               )}

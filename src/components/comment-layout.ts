@@ -16,28 +16,37 @@ export function arrangeComments(
     a.y < b.y + b.height + 20 &&
     a.y + a.height + 20 > b.y;
   for (const anchor of anchors) {
-    const maximumWidth = Math.min(236, anchors.length > 1 ? (width - 60) / 2 : width - 40);
-    const bubbleWidth = Math.min(maximumWidth, Math.max(152, 56 + anchor.text.length * 5.7));
+    const maximumWidth = Math.min(
+      220,
+      (width - 20 * (anchors.length + 1)) / Math.max(1, anchors.length),
+    );
+    const bubbleWidth = Math.min(
+      maximumWidth,
+      Math.max(anchor.editing ? 116 : 64, 28 + anchor.text.length * 6.1),
+    );
     const charsPerLine = Math.max(12, Math.floor((bubbleWidth - 28) / 6.1));
     const lines = anchor.text
       .split('\n')
       .reduce((total, line) => total + Math.max(1, Math.ceil(line.length / charsPerLine)), 0);
-    const textHeight = Math.min(72, Math.max(anchor.editing ? 36 : 18, lines * 18));
-    const bubbleHeight = 44 + textHeight;
+    const textHeight = Math.min(72, Math.max(18, lines * 18));
+    const bubbleHeight = 40 + textHeight;
     const preferredX = Math.max(20, Math.min(anchor.x - 1, width - bubbleWidth - 20));
-    const preferredY = anchor.y - bubbleHeight;
+    const preferredY = anchor.y - bubbleHeight - 12;
     const candidates: Rect[] = [];
     const neighboringRows = Object.values(result).flatMap((rect) => [
       rect.y + rect.height + 24,
       rect.y - bubbleHeight - 24,
     ]);
-    for (const y of [preferredY, 20, height - bubbleHeight - 20, ...neighboringRows]) {
+    for (const y of [preferredY, 20, ...neighboringRows]) {
       const columns =
         anchors.length > 1
-          ? [20, width - bubbleWidth - 20]
-          : [preferredX, 20, width - bubbleWidth - 20];
+          ? Array.from(
+              { length: anchors.length },
+              (_, lane) => 20 + lane * ((width - 40 - maximumWidth) / (anchors.length - 1)),
+            )
+          : [preferredX];
       for (const x of columns) {
-        if (y >= 20 && y + bubbleHeight <= height - 20)
+        if (y >= 20 && y + bubbleHeight <= Math.min(height - 20, anchor.y - 8))
           candidates.push({ x, y, width: bubbleWidth, height: bubbleHeight });
       }
     }

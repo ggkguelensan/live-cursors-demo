@@ -176,10 +176,10 @@ export class Replica {
     });
     return true;
   }
-  comment(text: string, editing: boolean, now: number) {
+  comment(text: string, editing: boolean, now: number, simulated = false) {
     const comment: Comment | null =
       text || editing
-        ? { text: text.slice(0, 180), editing, expiresAt: editing ? null : now + 30000 }
+        ? { text: text.slice(0, 180), editing, expiresAt: editing ? null : now + 30000, simulated }
         : null;
     this.publish(this.own.anchor, this.own.head, comment);
   }
